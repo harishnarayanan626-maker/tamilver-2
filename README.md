@@ -87,3 +87,5 @@ Not done (needs backend track — see `BACKEND_REQUESTS.md`):
    drift score); open Insights for the donut, bar chart and heatmap.
 5. **Contribute + roles** — submit a multi-period contribution (watch inline Zod
    errors, then Pending status); sign in as scholar to see the role badge.
+
+# tamilver-2
