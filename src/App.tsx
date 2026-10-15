@@ -41,6 +41,7 @@ type View =
   | "workspace"
   | "contribute"
   | "auth"
+  | "about"
   | "notfound";
 
 type Lang = "ta" | "en";
@@ -947,6 +948,52 @@ function AuthView({ onAuthed, notify }: {
   );
 }
 
+function AboutView({ setView }: { setView: (v: View) => void }) {
+  return (
+    <main className="page">
+      <div className="page-title">
+        <div>
+          <span className="kicker">பற்றி · ABOUT</span>
+          <h1 className="ta">சொற்காலம் பற்றி</h1>
+          <p>A living archive of Tamil language across 2,300 years.</p>
+        </div>
+      </div>
+      <div className="analysis-card">
+        <span className="kicker">SCHOLAR VERIFICATION NOTICE</span>
+        <h3 className="ta">மாதிரித் தரவு · Sample data</h3>
+        <p>
+          The bundled word corpus (32 entries across six historical periods) is
+          <b> sample data assembled for demonstration and interface verification</b>.
+          Word forms, meanings, verse excerpts and confidence scores have
+          <b> not been peer-reviewed</b> and must be verified by a qualified Tamil
+          scholar before any real scholarly, educational or publication use.
+        </p>
+        <p className="ta">
+          விதைத் தரவுகள் மாதிரிக்காகத் தொகுக்கப்பட்டவை; உண்மையான ஆய்வுக்குப்
+          பயன்படுத்தும் முன் தமிழ் அறிஞரின் சரிபார்ப்பு அவசியம்.
+        </p>
+      </div>
+      <div className="compare-grid" style={{ marginTop: 18 }}>
+        <div className="analysis-card">
+          <span className="kicker">HOW IT WORKS</span>
+          <h3>Change engine</h3>
+          <p>Grapheme-aware spelling diffs, embedding-based semantic drift
+            classification and usage-frequency tracking compare each word across eras.</p>
+        </div>
+        <div className="analysis-card">
+          <span className="kicker">EVIDENCE FIRST</span>
+          <h3>Citations</h3>
+          <p>Every claim links to literary evidence with APA, MLA and Chicago
+            citations you can copy straight into your research.</p>
+        </div>
+      </div>
+      <div style={{ marginTop: 18 }}>
+        <Button icon="arrow" onClick={() => setView("search")}>Explore words</Button>
+      </div>
+    </main>
+  );
+}
+
 function NotFound({ setView }: { setView: (v: View) => void }) {
   return (
     <main className="page">
@@ -1153,11 +1200,13 @@ function parseWordHash(): { id: string; params: JourneyParams } | null {
       {view === "auth" && (
         <AuthView notify={notify} onAuthed={(u) => { setUser(u); setView("workspace"); }} />
       )}
+      {view === "about" && <AboutView setView={setView} />}
       {view === "notfound" && <NotFound setView={setView} />}
       {view !== "auth" && (
         <footer>
           <Brand onClick={() => setView("home")} />
           <p className="ta">தமிழ்ச் சொற்களின் காலப்பயணம்.<br />A living archive of Tamil language. ({t("search")})</p>
+          <button onClick={() => setView("about")}>About</button>
           <button onClick={() => setView("notfound")}>System states</button>
           <small>© 2025 Sorkalam Research Project</small>
         </footer>
