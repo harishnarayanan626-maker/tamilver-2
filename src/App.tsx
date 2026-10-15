@@ -779,18 +779,52 @@ function ComparePage({ notify }: { notify: (m: string) => void }) {
 // Home: live stats + featured word from the real backend
 // ---------------------------------------------------------------------------
 
+function FeaturedQuote({ wordId, onOpen }: { wordId: string | null; onOpen: (id: string) => void }) {
+  const [quote, setQuote] = useState<EvidenceResponse["evidences"][number] | null>(null);
+  useEffect(() => {
+    if (!wordId) return;
+    api.evidence(wordId).then((d) => setQuote(d.evidences[0] || null)).catch(() => undefined);
+  }, [wordId]);
+  return (
+    <div className="era-quote">
+      <span className="quote-mark">“</span>
+      {quote ? (
+        <>
+          <p className="ta verse-ta">{quote.verseText}</p>
+          <small className="ta">{quote.source.titleTa} · {quote.source.author} · {quote.source.century}</small>
+          <button onClick={() => wordId && onOpen(wordId)}>சான்றைக் காண்க <Icon name="arrow" /></button>
+        </>
+      ) : (
+        <p><small>Loading live verse…</small></p>
+      )}
+    </div>
+  );
+}
+
 function Home({ setView, onSearch, onOpenJourney }: {
   setView: (v: View) => void; onSearch: (q: string) => void; onOpenJourney: (id: string) => void;
 }) {
   const [q, setQ] = useState("");
   const [stats, setStats] = useState<{ words: number; sources: number; periods: number } | null>(null);
   const [featured, setFeatured] = useState<JourneyResponse | null>(null);
+  const [eraLabel, setEraLabel] = useState("");
 
   useEffect(() => {
     api.insights()
-      .then((d) => setStats({ words: d.totalIndexedWords, sources: d.indexedSources, periods: d.periodsCovered }))
+      .then((d) => {
+        setStats({ words: d.totalIndexedWords, sources: d.indexedSources, periods: d.periodsCovered });
+        // Word of the Era: deterministic daily rotation over the live most-changed list.
+        const now = new Date();
+        const dayOfYear = Math.floor((now.getTime() - new Date(now.getFullYear(), 0, 0).getTime()) / 86400000);
+        const list = d.mostChangedWords;
+        if (list.length > 0) {
+          const pick = list[dayOfYear % list.length];
+          setEraLabel(`${now.toLocaleDateString()} · ${pick.details}`);
+          // Journey resolves by id, lemmaTa or lemmaModern — the live word string works.
+          api.journey(pick.word).then(setFeatured).catch(() => undefined);
+        }
+      })
       .catch(() => undefined);
-    api.journey("w-kadavul").then(setFeatured).catch(() => undefined);
   }, []);
 
   return (
@@ -821,10 +855,16 @@ function Home({ setView, onSearch, onOpenJourney }: {
         </div>
         <div className="era-card">
           <div className="era-main">
-            <div className="era-tag">பக்தி இலக்கியம் · 7ஆம் நூற்றாண்டு</div>
-            <div className="featured-word ta">{featured?.word.lemmaTa || "கடவுள்"}</div>
-            <div className="pronunciation">{featured?.word.transliteration || "kaṭavuḷ"} · {featured?.word.pos || "noun"}</div>
-            <p>{featured?.changeSummary || "From “one who transcends” to the modern divine — a word shaped by Tamil’s devotional movement."}</p>
+            <div className="era-tag ta">Word of the Era · {eraLabel || "daily pick from live research data"}</div>
+            {featured ? (
+              <>
+                <div className="featured-word ta">{featured.word.lemmaTa}</div>
+                <div className="pronunciation">{featured.word.transliteration} · {featured.word.pos}</div>
+                <p>{featured.changeSummary}</p>
+              </>
+            ) : (
+              <div className="skeleton"><i /><i /><i /></div>
+            )}
             <div className="change-row">
               <span className={`badge ${featured?.primaryChangeType || "meaning"}`}>
                 {featured?.primaryChangeType === "spelling" ? "எழுத்து மாற்றம்"
@@ -835,12 +875,7 @@ function Home({ setView, onSearch, onOpenJourney }: {
               </button>
             </div>
           </div>
-          <div className="era-quote">
-            <span className="quote-mark">“</span>
-            <p className="ta">கடவுள் வாழ்த்து<br />கண்ணுதற் கடவுளும்...</p>
-            <small>திருமுறை · சம்பந்தர் · c. 650 CE</small>
-            <button onClick={() => onOpenJourney("w-kadavul")}>சான்றைக் காண்க <Icon name="arrow" /></button>
-          </div>
+          <FeaturedQuote wordId={featured?.word.id || null} onOpen={onOpenJourney} />
         </div>
       </section>
       <section className="stats-band">
