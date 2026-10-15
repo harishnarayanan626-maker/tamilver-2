@@ -234,9 +234,9 @@ function SearchBox({ value, onChange, onSubmit, compact = false }: {
     <div className={`search-box ${compact ? "compact" : ""}`}>
       <Icon name="search" size={22} />
       <div className="search-input-wrap">
-        <input value={value} onChange={(e) => onChange(e.target.value)}
+        <input data-search-input value={value} onChange={(e) => onChange(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && onSubmit()}
-          placeholder="தமிழ்ச் சொல்லைத் தேடுங்கள்…" aria-label="Search Tamil words" className="ta" />
+          placeholder="தமிழ்ச் சொல்லைத் தேடுங்கள்… ( / )" aria-label="Search Tamil words" className="ta" />
         {!compact && <small>{value ? `தேடல்: ${value}` : "Try “kadavul” or கடவுள்"}</small>}
       </div>
       <button className="keyboard ta" aria-label="Tamil keyboard">அ</button>
@@ -1262,6 +1262,28 @@ function parseWordHash(): { id: string; params: JourneyParams } | null {
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, [view]);
+
+  // Keyboard shortcut: "/" focuses the search bar from anywhere.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
+      e.preventDefault();
+      const visible = Array.from(document.querySelectorAll<HTMLInputElement>("input[data-search-input]"))
+        .find((el) => el.offsetParent !== null);
+      if (visible) {
+        visible.focus();
+      } else {
+        setView("search");
+        window.setTimeout(() => {
+          document.querySelector<HTMLInputElement>("input[data-search-input]")?.focus();
+        }, 80);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   function openSearch(q: string) {
     setSearchQuery(q);
