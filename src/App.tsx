@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { z } from "zod";
 import {
   api,
   apiFetch,
@@ -14,6 +15,8 @@ import {
   type PeriodItem,
   type SearchResponse,
   type SearchResultItem,
+  type ContributionRecord,
+  type CollectionRecord,
   type DiffToken,
 } from "./lib/api";
 import { loadRecent, saveRecent, findRecent, type RecentEntry } from "./lib/recent";
@@ -1090,32 +1093,101 @@ function WorkspaceView() {
   );
 }
 
+const EvidenceRowSchema = z.object({
+  periodId: z.string().min(1, "Period is required"),
+  formText: z.string().min(1, "The period form is required"),
+  sourceTitle: z.string().min(2, "Source title needs at least 2 characters"),
+  verseText: z.string().min(5, "Verse needs at least 5 characters"),
+  translationEn: z.string().optional(),
+  lineRef: z.string().optional(),
+  century: z.string().optional(),
+});
+
+const ContributeFormSchema = z.object({
+  wordText: z.string().min(1, "Tamil word is required"),
+  changeType: z.enum(["spelling", "meaning", "usage"]),
+  rows: z.array(EvidenceRowSchema).min(1, "Add at least one period with evidence"),
+});
+
+interface EvidenceRow {
+  periodId: string;
+  formText: string;
+  sourceTitle: string;
+  verseText: string;
+  translationEn: string;
+  lineRef: string;
+  century: string;
+}
+
+const EMPTY_ROW: EvidenceRow = {
+  periodId: "sangam", formText: "", sourceTitle: "", verseText: "", translationEn: "", lineRef: "", century: "",
+};
+
+function fieldError(errors: Record<string, string>, key: string): ReactNode {
+  return errors[key] ? <span className="field-error">{errors[key]}</span> : null;
+}
+
 function ContributeView({ notify }: { notify: (m: string) => void }) {
-  const [items, setItems] = useState<Array<{ id: string; wordText: string; status: string; sourceTitle: string }>>([]);
+  const [items, setItems] = useState<ContributionRecord[]>([]);
+  const [periods, setPeriods] = useState<PeriodItem[]>([]);
   const [wordText, setWordText] = useState("");
-  const [sourceTitle, setSourceTitle] = useState("");
-  const [verseText, setVerseText] = useState("");
-  const [periodId, setPeriodId] = useState("sangam");
+  const [changeType, setChangeType] = useState<"spelling" | "meaning" | "usage">("meaning");
+  const [rows, setRows] = useState<EvidenceRow[]>([{ ...EMPTY_ROW }]);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+  const [justSubmitted, setJustSubmitted] = useState<ContributionRecord[]>([]);
 
   const refresh = useCallback(() => {
-    apiFetch<Array<{ id: string; wordText: string; status: string; sourceTitle: string }>>("/api/contributions")
-      .then(setItems).catch(() => undefined);
+    api.contributions().then(setItems).catch(() => undefined);
+    api.periods().then(setPeriods).catch(() => undefined);
   }, []);
 
   useEffect(refresh, [refresh]);
 
+  function setRow(i: number, patch: Partial<EvidenceRow>) {
+    setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  }
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    const parsed = ContributeFormSchema.safeParse({ wordText, changeType, rows });
+    if (!parsed.success) {
+      const map: Record<string, string> = {};
+      for (const issue of parsed.error.issues) {
+        map[issue.path.join(".")] = issue.message;
+      }
+      setErrors(map);
+      notify("Please fix the highlighted fields");
+      return;
+    }
+    setErrors({});
+    setBusy(true);
     try {
-      await apiFetch("/api/contributions", {
-        method: "POST",
-        body: { wordText, periodId, changeType: "meaning", sourceTitle, verseText },
-      });
-      notify("Contribution submitted for scholar review");
-      setWordText(""); setSourceTitle(""); setVerseText("");
+      // One contribution per period row (the API models one period per contribution).
+      const created: ContributionRecord[] = [];
+      for (const r of parsed.data.rows) {
+        const c = await api.createContribution({
+          wordText: parsed.data.wordText,
+          periodId: r.periodId,
+          changeType: parsed.data.changeType,
+          sourceTitle: r.sourceTitle,
+          verseText: r.verseText,
+          translationEn: r.translationEn || undefined,
+          lineRef: r.lineRef || undefined,
+          century: r.century || undefined,
+        });
+        created.push(c);
+      }
+      setJustSubmitted(created);
+      notify(`${created.length} evidence(s) submitted — status: Pending scholar review`);
+      setWordText("");
+      setChangeType("meaning");
+      setRows([{ ...EMPTY_ROW }]);
       refresh();
     } catch (err) {
       notify(err instanceof Error ? err.message : "Submit failed");
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -1128,35 +1200,77 @@ function ContributeView({ notify }: { notify: (m: string) => void }) {
           <p>Every contribution is reviewed by verified Tamil scholars.</p>
         </div>
       </div>
+      {justSubmitted.length > 0 && (
+        <div className="suggestion">
+          <Icon name="check" />
+          <span>Submitted <b className="ta">{justSubmitted[0].wordText}</b> ({justSubmitted.length} evidence row(s)) — status: <b>Pending</b> scholar review.</span>
+          <button onClick={() => setJustSubmitted([])}>Dismiss</button>
+        </div>
+      )}
       <div className="contribute-grid">
-        <form className="contribute-form" onSubmit={submit}>
-          <label>தமிழ்ச் சொல்<input value={wordText} onChange={(e) => setWordText(e.target.value)}
-            placeholder="எ.கா. கடவுள்" required className="ta" /></label>
-          <div className="form-row">
-            <label>வரலாற்றுக் காலம்
-              <select value={periodId} onChange={(e) => setPeriodId(e.target.value)}>
-                <option value="sangam">சங்க காலம்</option>
-                <option value="pallava">பக்தி காலம்</option>
-                <option value="chola">சோழர் காலம்</option>
-                <option value="nayak">நாயக்கர் காலம்</option>
-                <option value="colonial">காலனிய காலம்</option>
-                <option value="modern">நவீன காலம்</option>
-              </select>
-            </label>
-          </div>
-          <label>மூல நூல்<input value={sourceTitle} onChange={(e) => setSourceTitle(e.target.value)}
-            placeholder="நூலின் பெயர்" className="ta" /></label>
-          <label>மூல வரிகள்<textarea value={verseText} onChange={(e) => setVerseText(e.target.value)}
-            placeholder="அசல் தமிழ்ச் செய்யுளை இங்கே உள்ளிடவும்…" className="ta verse-ta" /></label>
-          <Button type="submit" icon="arrow">ஆய்வுக்கு அனுப்புக</Button>
+        <form className="contribute-form" onSubmit={submit} noValidate>
+          <div className="form-step"><span>01</span><div><h3>சொல் விவரம்</h3><p>New word details</p></div></div>
+          <label>தமிழ்ச் சொல் (new word)<input value={wordText} onChange={(e) => setWordText(e.target.value)}
+            placeholder="எ.கா. கடவுள்" className="ta" aria-invalid={!!errors["wordText"]} /></label>
+          {fieldError(errors, "wordText")}
+          <label>மாற்ற வகை
+            <select value={changeType} onChange={(e) => setChangeType(e.target.value as typeof changeType)}>
+              <option value="meaning">பொருள் மாற்றம் · meaning</option>
+              <option value="spelling">எழுத்து மாற்றம் · spelling</option>
+              <option value="usage">பயன்பாட்டு மாற்றம் · usage</option>
+            </select>
+          </label>
+          {fieldError(errors, "changeType")}
+          <div className="form-step"><span>02</span><div><h3>கால வடிவங்கள் + சான்றுகள்</h3><p>Forms per period with a verse as evidence</p></div></div>
+          {fieldError(errors, "rows")}
+          {rows.map((r, i) => (
+            <div className="evidence-row" key={i}>
+              <div className="form-row">
+                <label>வரலாற்றுக் காலம்
+                  <select value={r.periodId} onChange={(e) => setRow(i, { periodId: e.target.value })}>
+                    {periods.map((p) => <option key={p.id} value={p.id}>{p.nameTa} · {p.name}</option>)}
+                  </select>
+                </label>
+                <label>அக்கால வடிவம்<input value={r.formText} onChange={(e) => setRow(i, { formText: e.target.value })}
+                  placeholder="எ.கா. யாண்டு" className="ta" /></label>
+              </div>
+              {fieldError(errors, `rows.${i}.periodId`)}
+              {fieldError(errors, `rows.${i}.formText`)}
+              <label>மூல நூல்<input value={r.sourceTitle} onChange={(e) => setRow(i, { sourceTitle: e.target.value })}
+                placeholder="நூலின் பெயர்" className="ta" /></label>
+              {fieldError(errors, `rows.${i}.sourceTitle`)}
+              <label>மூல வரிகள் (verse evidence)<textarea value={r.verseText}
+                onChange={(e) => setRow(i, { verseText: e.target.value })}
+                placeholder="அசல் தமிழ்ச் செய்யுளை இங்கே உள்ளிடவும்…" className="ta verse-ta" /></label>
+              {fieldError(errors, `rows.${i}.verseText`)}
+              <div className="form-row">
+                <label>மொழிபெயர்ப்பு (EN)<input value={r.translationEn}
+                  onChange={(e) => setRow(i, { translationEn: e.target.value })} placeholder="English gloss" /></label>
+                <label>பாடல் / வரி<input value={r.lineRef} onChange={(e) => setRow(i, { lineRef: e.target.value })}
+                  placeholder="எ.கா. 192:4" /></label>
+              </div>
+              <label>நூற்றாண்டு<input value={r.century} onChange={(e) => setRow(i, { century: e.target.value })}
+                placeholder="எ.கா. 7ஆம் நூற்றாண்டு" className="ta" /></label>
+              {rows.length > 1 && (
+                <Button variant="ghost" onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))}>
+                  Remove this period
+                </Button>
+              )}
+            </div>
+          ))}
+          <Button variant="soft" icon="plus" onClick={() => setRows((rs) => [...rs, { ...EMPTY_ROW }])}>
+            Add another period
+          </Button>
+          <div style={{ height: 12 }} />
+          <Button type="submit" icon="arrow">{busy ? "Submitting…" : "ஆய்வுக்கு அனுப்புக"}</Button>
         </form>
         <aside className="review-queue">
-          <div className="queue-head"><span className="kicker">SCHOLAR REVIEW QUEUE</span><h3 className="ta">சரிபார்ப்புப் பட்டியல்</h3></div>
+          <div className="queue-head"><span className="kicker">YOUR SUBMISSIONS</span><h3 className="ta">சமர்ப்பிப்புகள்</h3></div>
           {items.map((w) => (
             <div className="queue-item" key={w.id}>
               <span className={`status ${w.status}`} />
-              <div><b className="ta">{w.wordText}</b><small>{w.sourceTitle}</small></div>
-              <em>{w.status}</em>
+              <div><b className="ta">{w.wordText}</b><small>{w.sourceTitle} · {w.periodId}</small></div>
+              <span className={`status-pill ${w.status}`}>{w.status}</span>
             </div>
           ))}
           {items.length === 0 && <small>No contributions yet.</small>}
