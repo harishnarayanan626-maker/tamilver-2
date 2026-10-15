@@ -394,7 +394,101 @@ export const api = {
   me() {
     return apiFetch<AuthUser>("/api/auth/me");
   },
+  collections() {
+    return apiFetch<CollectionRecord[]>("/api/collections");
+  },
+  createCollection(name: string, description?: string) {
+    return apiFetch<CollectionRecord>("/api/collections", {
+      method: "POST",
+      body: { name, description },
+    });
+  },
+  addCollectionItem(collectionId: string, wordId: string, notes?: string) {
+    return apiFetch<CollectionRecord>(`/api/collections/${encodeURIComponent(collectionId)}/items`, {
+      method: "POST",
+      body: { wordId, notes },
+    });
+  },
+  /** Requested backend endpoints (see BACKEND_REQUESTS.md). These 404 until added. */
+  renameCollection(collectionId: string, name: string, description?: string) {
+    return apiFetch<CollectionRecord>(`/api/collections/${encodeURIComponent(collectionId)}`, {
+      method: "PATCH",
+      body: { name, description },
+    });
+  },
+  deleteCollection(collectionId: string) {
+    return apiFetch<{ id: string }>(`/api/collections/${encodeURIComponent(collectionId)}`, {
+      method: "DELETE",
+    });
+  },
+  updateCollectionItemNotes(collectionId: string, itemId: string, notes: string) {
+    return apiFetch<CollectionRecord>(
+      `/api/collections/${encodeURIComponent(collectionId)}/items/${encodeURIComponent(itemId)}`,
+      { method: "PATCH", body: { notes } }
+    );
+  },
+  exportCollection(collectionId: string, format: "csv" | "json" | "txt" = "csv") {
+    return apiFetch<unknown>(`/api/collections/${encodeURIComponent(collectionId)}/export`, {
+      query: { format },
+    });
+  },
+  contributions() {
+    return apiFetch<ContributionRecord[]>("/api/contributions");
+  },
+  createContribution(payload: {
+    wordText: string;
+    periodId: string;
+    changeType: "spelling" | "meaning" | "usage";
+    sourceTitle: string;
+    verseText: string;
+    translationEn?: string;
+    lineRef?: string;
+    century?: string;
+  }) {
+    return apiFetch<ContributionRecord>("/api/contributions", { method: "POST", body: payload });
+  },
+  reviewContribution(id: string, status: "approved" | "rejected", notes: string) {
+    return apiFetch<ContributionRecord>(`/api/contributions/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: { status, notes },
+    });
+  },
 };
+
+export interface CollectionItemRecord {
+  id: string;
+  wordId: string;
+  wordTa: string;
+  lemmaModern: string;
+  notes?: string;
+  addedAt: string;
+}
+
+export interface CollectionRecord {
+  id: string;
+  userId: string;
+  name: string;
+  description?: string;
+  createdAt: string;
+  items: CollectionItemRecord[];
+}
+
+export interface ContributionRecord {
+  id: string;
+  userId: string;
+  wordText: string;
+  periodId: string;
+  changeType: "spelling" | "meaning" | "usage";
+  sourceTitle: string;
+  verseText: string;
+  translationEn?: string;
+  lineRef?: string;
+  century?: string;
+  status: "pending" | "approved" | "rejected";
+  reviewerId?: string;
+  notes?: string;
+  createdAt: string;
+}
 
 // ---------------------------------------------------------------------------
 // Client-side Tamil grapheme splitter (Intl.Segmenter, never splits base+vowel sign)
