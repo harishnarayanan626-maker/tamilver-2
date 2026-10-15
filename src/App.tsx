@@ -311,6 +311,16 @@ function EvidenceDrawer({ wordId, periodId, onClose, notify }: {
   const [error, setError] = useState<string | null>(null);
   const [citeStyle, setCiteStyle] = useState<"apa" | "mla" | "chicago">("apa");
   const [copied, setCopied] = useState(false);
+  const closeRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    closeRef.current?.focus();
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
 
   useEffect(() => {
     let live = true;
@@ -345,14 +355,16 @@ function EvidenceDrawer({ wordId, periodId, onClose, notify }: {
   return (
     <>
       <button className="drawer-backdrop" onClick={onClose} aria-label="Close evidence" />
-      <aside className="drawer" aria-label="Evidence panel">
+      <aside className="drawer" role="dialog" aria-modal="true" aria-label="Evidence panel">
         <div className="drawer-handle" />
         <div className="drawer-head">
           <div>
             <span className="kicker">முதன்மைச் சான்று · PRIMARY EVIDENCE</span>
             <h2 className="ta">{first ? `${first.source.titleTa} · ${first.pageOrVerseNo || first.lineRef || ""}` : "சான்றுகள்"}</h2>
           </div>
-          <button className="icon-button" onClick={onClose} aria-label="Close"><Icon name="close" /></button>
+          <button ref={closeRef} className="icon-button" onClick={onClose} aria-label="Close evidence panel">
+            <Icon name="close" />
+          </button>
         </div>
         {loading && <div className="skeleton"><i /><i /><i /><i /></div>}
         {error && <ErrorState message={error} onRetry={() => window.location.reload()} />}
@@ -704,7 +716,25 @@ function JourneyView({ wordId, params, notify, onShare }: {
       </div>
       <section className="timeline-wrap">
         <div className="timeline-intro"><span>300 BCE</span><b>2,300 years of change</b><span>Today</span></div>
-        <div className="timeline" role="tablist" aria-label="Period timeline">
+        <div
+          className="timeline"
+          role="tablist"
+          aria-label="Period timeline. Use left and right arrow keys to move between periods."
+          onKeyDown={(e) => {
+            const nodes = Array.from(document.querySelectorAll<HTMLButtonElement>(".timeline-node"));
+            const current = nodes.indexOf(document.activeElement as HTMLButtonElement);
+            if (current < 0) return;
+            let next: number | null = null;
+            if (e.key === "ArrowRight") next = (current + 1) % nodes.length;
+            else if (e.key === "ArrowLeft") next = (current - 1 + nodes.length) % nodes.length;
+            else if (e.key === "Home") next = 0;
+            else if (e.key === "End") next = nodes.length - 1;
+            if (next !== null) {
+              e.preventDefault();
+              nodes[next].focus();
+            }
+          }}
+        >
           <div className="river" />
           {journey.timeline.map((p) => (
             <button key={p.periodId} role="tab" aria-selected={p.periodId === activeNode.periodId}
@@ -1514,6 +1544,19 @@ function parseWordHash(): { id: string; params: JourneyParams } | null {
 
   return (
     <div className={dark ? "app dark" : "app"} lang={lang === "ta" ? "ta" : "en"}>
+      <button
+        className="skip-link"
+        onClick={() => {
+          const main = document.querySelector("main");
+          if (main) {
+            (main as HTMLElement).setAttribute("tabindex", "-1");
+            (main as HTMLElement).focus({ preventScroll: true });
+            main.scrollIntoView();
+          }
+        }}
+      >
+        Skip to content
+      </button>
       {view !== "auth" && (
         <Header view={view} setView={setView} dark={dark} setDark={setDark}
           lang={lang} setLang={setLang} user={user} onSignOut={handleSignOut} />
