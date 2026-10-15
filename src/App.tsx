@@ -537,7 +537,14 @@ function SearchView({ initialQuery, onOpenJourney }: {
 // Journey view: hero screen with timeline + morph + diff + evidence
 // ---------------------------------------------------------------------------
 
-function JourneyView({ wordId, notify }: { wordId: string; notify: (m: string) => void }) {
+export interface JourneyParams {
+  from?: string;
+  to?: string;
+}
+
+function JourneyView({ wordId, params, notify, onShare }: {
+  wordId: string; params: JourneyParams; notify: (m: string) => void; onShare: (url: string) => void;
+}) {
   const [journey, setJourney] = useState<JourneyResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -553,12 +560,15 @@ function JourneyView({ wordId, notify }: { wordId: string; notify: (m: string) =
       .then((d) => {
         if (!live) return;
         setJourney(d);
-        setActivePeriod(d.timeline[Math.min(2, d.timeline.length - 1)]?.periodId || d.timeline[0]?.periodId);
+        const wantedTo = params.to && d.timeline.some((n) => n.periodId === params.to)
+          ? params.to
+          : d.timeline[Math.min(2, d.timeline.length - 1)]?.periodId || d.timeline[0]?.periodId;
+        setActivePeriod(wantedTo);
         setLoading(false);
       })
       .catch((e: Error) => { if (live) { setError(e.message); setLoading(false); } });
     return () => { live = false; };
-  }, [wordId]);
+  }, [wordId, params.to]);
 
   const activeNode = useMemo(
     () => journey?.timeline.find((n) => n.periodId === activePeriod) || journey?.timeline[0] || null,
@@ -567,14 +577,23 @@ function JourneyView({ wordId, notify }: { wordId: string; notify: (m: string) =
 
   useEffect(() => {
     if (!journey || !activeNode) return;
-    const first = journey.timeline[0];
-    if (!first || first.periodId === activeNode.periodId) { setCompare(null); return; }
+    const base = (params.from && journey.timeline.find((n) => n.periodId === params.from)) || journey.timeline[0];
+    if (!base || base.periodId === activeNode.periodId) { setCompare(null); return; }
     let live = true;
-    api.compare(journey.word.lemmaTa, first.periodId, activeNode.periodId)
+    api.compare(journey.word.lemmaTa, base.periodId, activeNode.periodId)
       .then((c) => { if (live) setCompare(c); })
       .catch(() => { if (live) setCompare(null); });
     return () => { live = false; };
-  }, [journey, activeNode]);
+  }, [journey, activeNode, params.from]);
+
+  function shareJourney() {
+    if (!journey || !activeNode) return;
+    const base = (params.from && journey.timeline.some((n) => n.periodId === params.from))
+      ? params.from
+      : journey.timeline[0]?.periodId || "sangam";
+    const url = `${window.location.origin}${window.location.pathname}#/word/${encodeURIComponent(journey.word.id)}?from=${base}&to=${activeNode.periodId}`;
+    onShare(url);
+  }
 
   if (loading) {
     return (
@@ -608,6 +627,7 @@ function JourneyView({ wordId, notify }: { wordId: string; notify: (m: string) =
               ))}
             </h1>
             <button onClick={() => setEvidenceOpen(true)}><Icon name="bookmark" /> சேமிக்க</button>
+            <button onClick={shareJourney} aria-label="Copy permalink"><Icon name="copy" /> Share</button>
           </div>
           <p>{journey.word.transliteration} · {journey.word.pos} · year, annual cycle</p>
         </div>
@@ -1195,6 +1215,20 @@ export default function App() {
   const [user, setUser] = useState<AuthUser | null>(loadCachedUser);
   const [searchQuery, setSearchQuery] = useState("");
   const [journeyId, setJourneyId] = useState("w-kadavul");
+  const [journeyParams, setJourneyParams] = useState<JourneyParams>({});
+
+function parseWordHash(): { id: string; params: JourneyParams } | null {
+  try {
+    const h = window.location.hash;
+    const m = h.match(/^#\/word\/([^?]+)(\?(.*))?$/);
+    if (!m) return null;
+    const id = decodeURIComponent(m[1]);
+    const sp = new URLSearchParams(m[3] || "");
+    return { id, params: { from: sp.get("from") || undefined, to: sp.get("to") || undefined } };
+  } catch {
+    return null;
+  }
+}
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<number | null>(null);
 
@@ -1234,10 +1268,47 @@ export default function App() {
     setView("search");
   }
 
-  function openJourney(id: string) {
+  function openJourney(id: string, params: JourneyParams = {}) {
     setJourneyId(id);
+    setJourneyParams(params);
     setView("journey");
+    try {
+      const qs = new URLSearchParams();
+      if (params.from) qs.set("from", params.from);
+      if (params.to) qs.set("to", params.to);
+      const suffix = qs.toString() ? `?${qs.toString()}` : "";
+      window.location.hash = `/word/${encodeURIComponent(id)}${suffix}`;
+    } catch { /* noop */ }
   }
+
+  async function shareUrl(url: string) {
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch {
+      const ta = document.createElement("textarea");
+      ta.value = url;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+    }
+    notify("Permalink copied — share this word journey");
+  }
+
+  // Deep link: #/word/:id?from=&to= opens the journey directly (incl. back/forward).
+  useEffect(() => {
+    const apply = () => {
+      const parsed = parseWordHash();
+      if (parsed) {
+        setJourneyId(parsed.id);
+        setJourneyParams(parsed.params);
+        setView("journey");
+      }
+    };
+    apply();
+    window.addEventListener("hashchange", apply);
+    return () => window.removeEventListener("hashchange", apply);
+  }, []);
 
   function handleSignOut() {
     clearAuth();
@@ -1256,7 +1327,9 @@ export default function App() {
       )}
       {view === "home" && <Home setView={setView} onSearch={openSearch} onOpenJourney={openJourney} />}
       {view === "search" && <SearchView initialQuery={searchQuery} onOpenJourney={openJourney} />}
-      {view === "journey" && <JourneyView wordId={journeyId} notify={notify} />}
+      {view === "journey" && (
+        <JourneyView wordId={journeyId} params={journeyParams} notify={notify} onShare={shareUrl} />
+      )}
       {view === "compare" && <ComparePage notify={notify} />}
       {view === "insights" && <InsightsView />}
       {view === "workspace" && (
