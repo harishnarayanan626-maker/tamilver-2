@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, lazy, Suspense, type ReactNode } from "react";
 import { z } from "zod";
 import {
   api,
@@ -7,7 +7,6 @@ import {
   setToken,
   clearAuth,
   setOnUnauthorized,
-  splitGraphemesClient,
   type AuthUser,
   type CompareResponse,
   type EvidenceResponse,
@@ -17,9 +16,21 @@ import {
   type SearchResultItem,
   type ContributionRecord,
   type CollectionRecord,
-  type DiffToken,
 } from "./lib/api";
 import { loadRecent, saveRecent, findRecent, type RecentEntry } from "./lib/recent";
+import {
+  Icon,
+  Button,
+  SkeletonCards,
+  EmptyState,
+  ErrorState,
+  DiffStrip,
+  type IconName,
+} from "./components/ui";
+import type { JourneyParams } from "./views/JourneyView";
+
+const JourneyView = lazy(() => import("./views/JourneyView"));
+const InsightsChartsPanel = lazy(() => import("./components/InsightsCharts"));
 
 type View =
   | "home"
@@ -31,11 +42,6 @@ type View =
   | "contribute"
   | "auth"
   | "notfound";
-
-type IconName =
-  | "search" | "arrow" | "book" | "evidence" | "chart" | "bookmark" | "plus"
-  | "user" | "moon" | "sun" | "menu" | "close" | "copy" | "external"
-  | "check" | "filter" | "download" | "note" | "spark";
 
 type Lang = "ta" | "en";
 
@@ -79,47 +85,6 @@ const STRINGS: Record<string, { ta: string; en: string }> = {
   signOut: { ta: "வெளியேறு", en: "Sign out" },
 };
 
-function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
-  const paths: Record<IconName, ReactNode> = {
-    search: <><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 4.5 4.5" /></>,
-    arrow: <><path d="M5 12h14M14 7l5 5-5 5" /></>,
-    book: <><path d="M4 5.5A3.5 3.5 0 0 1 7.5 2H12v17H7.5A3.5 3.5 0 0 0 4 22V5.5Z" /><path d="M20 5.5A3.5 3.5 0 0 0 16.5 2H12v17h4.5A3.5 3.5 0 0 1 20 22V5.5Z" /></>,
-    evidence: <><path d="M6 2h9l4 4v16H6z" /><path d="M14 2v5h5M9 12h6M9 16h6" /></>,
-    chart: <><path d="M4 20V10M10 20V4M16 20v-7M22 20H2" /></>,
-    bookmark: <path d="M6 3h12v19l-6-4-6 4z" />,
-    plus: <path d="M12 5v14M5 12h14" />,
-    user: <><circle cx="12" cy="8" r="4" /><path d="M4 22a8 8 0 0 1 16 0" /></>,
-    moon: <path d="M21 15.2A9 9 0 1 1 8.8 3 7 7 0 0 0 21 15.2Z" />,
-    sun: <><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></>,
-    menu: <path d="M4 7h16M4 12h16M4 17h16" />,
-    close: <path d="m6 6 12 12M18 6 6 18" />,
-    copy: <><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3" /></>,
-    external: <><path d="M14 4h6v6M20 4l-9 9" /><path d="M19 14v6H4V5h6" /></>,
-    check: <path d="m5 12 4 4L19 6" />,
-    filter: <path d="M3 5h18l-7 8v6l-4 2v-8z" />,
-    download: <><path d="M12 3v12M7 10l5 5 5-5" /><path d="M4 19h16" /></>,
-    note: <><path d="M5 3h14v18H5z" /><path d="M9 8h6M9 12h6M9 16h4" /></>,
-    spark: <path d="m12 2 1.5 6.5L20 10l-6.5 1.5L12 18l-1.5-6.5L4 10l6.5-1.5z" />,
-  };
-  return (
-    <svg aria-hidden="true" className="icon" width={size} height={size} viewBox="0 0 24 24"
-      fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-      {paths[name]}
-    </svg>
-  );
-}
-
-function Button({ children, variant = "primary", icon, onClick, type }: {
-  children: ReactNode; variant?: "primary" | "ghost" | "soft"; icon?: IconName;
-  onClick?: () => void; type?: "button" | "submit";
-}) {
-  return (
-    <button type={type || "button"} className={`button ${variant}`} onClick={onClick}>
-      {icon && <Icon name={icon} />}{children}
-    </button>
-  );
-}
-
 function Brand({ onClick }: { onClick: () => void }) {
   return (
     <button className="brand" onClick={onClick} aria-label="Sorkalam home">
@@ -141,42 +106,6 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
 function Toast({ message }: { message: string | null }) {
   if (!message) return null;
   return <div className="toast" role="status">{message}</div>;
-}
-
-function SkeletonCards({ count = 3 }: { count?: number }) {
-  return (
-    <div aria-label="Loading results">
-      {Array.from({ length: count }).map((_, i) => (
-        <div className="result-card skeleton-card" key={i} aria-hidden="true">
-          <div className="skeleton"><i /><i /><i /></div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function EmptyState({ title, hint, action }: { title: string; hint: string; action?: ReactNode }) {
-  return (
-    <div className="state-card">
-      <span className="kicker">NO RESULTS</span>
-      <div className="state-icon"><Icon name="evidence" size={34} /><i /></div>
-      <b className="ta">{title}</b>
-      <small>{hint}</small>
-      {action}
-    </div>
-  );
-}
-
-function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
-  return (
-    <div className="state-card error-state">
-      <span className="kicker">ERROR</span>
-      <div className="state-icon"><Icon name="close" size={34} /></div>
-      <b className="ta">சிறு தடங்கல் ஏற்பட்டது</b>
-      <small>{message}</small>
-      <Button variant="soft" onClick={onRetry}>Try again</Button>
-    </div>
-  );
 }
 
 // ---------------------------------------------------------------------------
@@ -224,10 +153,6 @@ function Header({ view, setView, dark, setDark, lang, setLang, user, onSignOut }
   );
 }
 
-function KolamDivider() {
-  return <div className="kolam" aria-hidden="true"><span /><i /><b /><i /><span /></div>;
-}
-
 // ---------------------------------------------------------------------------
 // Search box (instant local transliteration hint; parent does the live fetch)
 // ---------------------------------------------------------------------------
@@ -249,175 +174,6 @@ function SearchBox({ value, onChange, onSubmit, compact = false }: {
         <span className="ta">தேடுக</span><Icon name="arrow" />
       </button>
     </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Letter-level diff strip (grapheme-intact: tokens render whole, never split)
-// ---------------------------------------------------------------------------
-
-function DiffStrip({ tokens, fromText, toText }: { tokens: DiffToken[]; fromText: string; toText: string }) {
-  return (
-    <div className="diff-card">
-      <div className="diff-side old">
-        <span>பழந்தமிழ் · OLD TAMIL</span>
-        <div className="diff-word ta" aria-label={`Old form ${fromText}`}>
-          {tokens.filter((d) => d.type !== "insert").map((d, i) => {
-            if (d.type === "match") return <span key={i} className="tok-match ta">{d.oldChar}</span>;
-            if (d.type === "delete") return <mark key={i} className="tok-del ta">{d.oldChar}</mark>;
-            return <mark key={i} className="tok-rep-old ta">{d.oldChar}</mark>;
-          })}
-        </div>
-        <small className="ta">{fromText}</small>
-      </div>
-      <div className="diff-arrow"><Icon name="arrow" /></div>
-      <div className="diff-side new">
-        <span>நவீன தமிழ் · MODERN</span>
-        <div className="diff-word ta" aria-label={`New form ${toText}`}>
-          {tokens.filter((d) => d.type !== "delete").map((d, i) => {
-            if (d.type === "match") return <span key={i} className="tok-match ta">{d.newChar}</span>;
-            if (d.type === "insert") return <mark key={i} className="tok-ins ta">{d.newChar}</mark>;
-            return <mark key={i} className="tok-rep-new ta">{d.newChar}</mark>;
-          })}
-        </div>
-        <small className="ta">{toText}</small>
-      </div>
-    </div>
-  );
-}
-
-function highlightVerse(verse: string, formText: string): ReactNode {
-  if (!verse) return null;
-  if (!formText || !verse.includes(formText)) return <span className="ta">{verse}</span>;
-  const parts = verse.split(formText);
-  return (
-    <span className="ta">
-      {parts.map((p, i) => (
-        <span key={i}>{p}{i < parts.length - 1 && <mark className="ta">{formText}</mark>}</span>
-      ))}
-    </span>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Evidence drawer (live /evidence, cite copies APA/MLA from backend citations)
-// ---------------------------------------------------------------------------
-
-function EvidenceDrawer({ wordId, periodId, onClose, notify }: {
-  wordId: string; periodId?: string; onClose: () => void; notify: (m: string) => void;
-}) {
-  const [data, setData] = useState<EvidenceResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [citeStyle, setCiteStyle] = useState<"apa" | "mla" | "chicago">("apa");
-  const [copied, setCopied] = useState(false);
-  const closeRef = useRef<HTMLButtonElement>(null);
-
-  useEffect(() => {
-    closeRef.current?.focus();
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
-  useEffect(() => {
-    let live = true;
-    setLoading(true);
-    setError(null);
-    api.evidence(wordId, periodId)
-      .then((d) => { if (live) { setData(d); setLoading(false); } })
-      .catch((e: Error) => { if (live) { setError(e.message); setLoading(false); } });
-    return () => { live = false; };
-  }, [wordId, periodId]);
-
-  const first = data?.evidences[0];
-
-  async function copyCitation() {
-    if (!first) return;
-    const text = first.citations[citeStyle];
-    try {
-      await navigator.clipboard.writeText(text);
-    } catch {
-      const ta = document.createElement("textarea");
-      ta.value = text;
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand("copy");
-      document.body.removeChild(ta);
-    }
-    setCopied(true);
-    notify("Citation copied to clipboard");
-    window.setTimeout(() => setCopied(false), 2000);
-  }
-
-  return (
-    <>
-      <button className="drawer-backdrop" onClick={onClose} aria-label="Close evidence" />
-      <aside className="drawer" role="dialog" aria-modal="true" aria-label="Evidence panel">
-        <div className="drawer-handle" />
-        <div className="drawer-head">
-          <div>
-            <span className="kicker">முதன்மைச் சான்று · PRIMARY EVIDENCE</span>
-            <h2 className="ta">{first ? `${first.source.titleTa} · ${first.pageOrVerseNo || first.lineRef || ""}` : "சான்றுகள்"}</h2>
-          </div>
-          <button ref={closeRef} className="icon-button" onClick={onClose} aria-label="Close evidence panel">
-            <Icon name="close" />
-          </button>
-        </div>
-        {loading && <div className="skeleton"><i /><i /><i /><i /></div>}
-        {error && <ErrorState message={error} onRetry={() => window.location.reload()} />}
-        {data && data.evidences.length === 0 && (
-          <EmptyState title="சான்று இன்னும் கிடைக்கவில்லை" hint="No verified evidence for this period yet." />
-        )}
-        {first && (
-          <>
-            <div className="reliability">
-              <span><Icon name="check" />{first.verified ? "Peer-reviewed source" : "Unverified source"}</span>
-              <b>{first.verified ? "High confidence" : "Needs review"}</b>
-            </div>
-            <div className="verse verse-ta">
-              <span className="verse-number">{first.pageOrVerseNo || "❧"}</span>
-              <p>{highlightVerse(first.verseText, first.formText)}</p>
-            </div>
-            <div className="translation-block">
-              <span>ATTESTED FORM</span>
-              <p className="ta">{first.formText} · {first.periodNameTa} ({first.years})</p>
-            </div>
-            <div className="translation-block">
-              <span>ENGLISH GLOSS</span>
-              <p>{first.translationEn}</p>
-            </div>
-            <KolamDivider />
-            <dl className="source-details">
-              <div><dt>Source</dt><dd className="ta">{first.source.titleTa} · {first.source.title}</dd></div>
-              <div><dt>Period</dt><dd>{first.periodName} · {first.years}</dd></div>
-              <div><dt>Author</dt><dd className="ta">{first.source.author}</dd></div>
-              <div><dt>Reference</dt><dd>{first.pageOrVerseNo || first.lineRef || "—"}</dd></div>
-            </dl>
-            <div className="citation">
-              <span>CITE THIS EVIDENCE</span>
-              <div className="citation-tabs">
-                {(["apa", "mla", "chicago"] as const).map((s) => (
-                  <button key={s} className={citeStyle === s ? "active" : ""} onClick={() => setCiteStyle(s)}>
-                    {s.toUpperCase()}
-                  </button>
-                ))}
-              </div>
-              <p>{first.citations[citeStyle]}</p>
-            </div>
-            <div className="drawer-actions">
-              <Button variant="soft" icon={copied ? "check" : "copy"} onClick={copyCitation}>
-                {copied ? "Copied" : "Cite this"}
-              </Button>
-              <Button icon="external">Open full text</Button>
-            </div>
-            {data.count > 1 && <small>{data.count - 1} more evidence(s) for this word — refine by period.</small>}
-          </>
-        )}
-      </aside>
-    </>
   );
 }
 
@@ -606,203 +362,8 @@ function SearchView({ initialQuery, onOpenJourney }: {
 }
 
 // ---------------------------------------------------------------------------
-// Journey view: hero screen with timeline + morph + diff + evidence
-// ---------------------------------------------------------------------------
-
-export interface JourneyParams {
-  from?: string;
-  to?: string;
-}
-
-function JourneyView({ wordId, params, notify, onShare }: {
-  wordId: string; params: JourneyParams; notify: (m: string) => void; onShare: (url: string) => void;
-}) {
-  const [journey, setJourney] = useState<JourneyResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [activePeriod, setActivePeriod] = useState<string | null>(null);
-  const [compare, setCompare] = useState<CompareResponse | null>(null);
-  const [evidenceOpen, setEvidenceOpen] = useState(false);
-
-  useEffect(() => {
-    let live = true;
-    setLoading(true);
-    setError(null);
-    api.journey(wordId)
-      .then((d) => {
-        if (!live) return;
-        setJourney(d);
-        const wantedTo = params.to && d.timeline.some((n) => n.periodId === params.to)
-          ? params.to
-          : d.timeline[Math.min(2, d.timeline.length - 1)]?.periodId || d.timeline[0]?.periodId;
-        setActivePeriod(wantedTo);
-        setLoading(false);
-      })
-      .catch((e: Error) => { if (live) { setError(e.message); setLoading(false); } });
-    return () => { live = false; };
-  }, [wordId, params.to]);
-
-  const activeNode = useMemo(
-    () => journey?.timeline.find((n) => n.periodId === activePeriod) || journey?.timeline[0] || null,
-    [journey, activePeriod]
-  );
-
-  useEffect(() => {
-    if (!journey || !activeNode) return;
-    const base = (params.from && journey.timeline.find((n) => n.periodId === params.from)) || journey.timeline[0];
-    if (!base || base.periodId === activeNode.periodId) { setCompare(null); return; }
-    let live = true;
-    api.compare(journey.word.lemmaTa, base.periodId, activeNode.periodId)
-      .then((c) => { if (live) setCompare(c); })
-      .catch(() => { if (live) setCompare(null); });
-    return () => { live = false; };
-  }, [journey, activeNode, params.from]);
-
-  function shareJourney() {
-    if (!journey || !activeNode) return;
-    const base = (params.from && journey.timeline.some((n) => n.periodId === params.from))
-      ? params.from
-      : journey.timeline[0]?.periodId || "sangam";
-    const url = `${window.location.origin}${window.location.pathname}#/word/${encodeURIComponent(journey.word.id)}?from=${base}&to=${activeNode.periodId}`;
-    onShare(url);
-  }
-
-  if (loading) {
-    return (
-      <main className="page">
-        <div className="skeleton"><i /><i /><i /><i /></div>
-        <b className="ta">சான்றுகளைத் தேடுகிறோம்…</b>
-        <small>Searching indexed texts</small>
-      </main>
-    );
-  }
-  if (error || !journey || !activeNode) {
-    return (
-      <main className="page">
-        <ErrorState message={error || "Word journey not found."} onRetry={() => window.location.reload()} />
-      </main>
-    );
-  }
-
-  const graphemes = splitGraphemesClient(activeNode.word);
-
-  return (
-    <main className="journey-page">
-      <div className="journey-title">
-        <div>
-          <span className="kicker">சொல் பயணம் · WORD JOURNEY</span>
-          <div className="title-word">
-            <h1 className="ta morph-giant" key={activeNode.word}>
-              {graphemes.map((g, i) => (
-                <span key={`${activeNode.periodId}-${i}`} className="morph-letter ta"
-                  style={{ animationDelay: `${i * 45}ms` }}>{g}</span>
-              ))}
-            </h1>
-            <button onClick={() => setEvidenceOpen(true)}><Icon name="bookmark" /> சேமிக்க</button>
-            <button onClick={shareJourney} aria-label="Copy permalink"><Icon name="copy" /> Share</button>
-          </div>
-          <p>{journey.word.transliteration} · {journey.word.pos} · year, annual cycle</p>
-        </div>
-        <div className="confidence">
-          <div><span style={{ width: `${journey.overallConfidence}%` }} /></div>
-          <b>{journey.overallConfidence}%</b>
-          <small>evidence confidence</small>
-        </div>
-      </div>
-      <div className="morph-strip" aria-label="Letter morph across eras">
-        <span className="ta">{journey.timeline[0]?.word}</span><i className="ta">{activeNode.meaningTa}</i>
-        <div /><span className="ta">{activeNode.word}</span><i className="ta">{activeNode.meaningEn}</i>
-        <small>சொல் உருமாற்றம் · letter morph</small>
-      </div>
-      <section className="timeline-wrap">
-        <div className="timeline-intro"><span>300 BCE</span><b>2,300 years of change</b><span>Today</span></div>
-        <div
-          className="timeline"
-          role="tablist"
-          aria-label="Period timeline. Use left and right arrow keys to move between periods."
-          onKeyDown={(e) => {
-            const nodes = Array.from(document.querySelectorAll<HTMLButtonElement>(".timeline-node"));
-            const current = nodes.indexOf(document.activeElement as HTMLButtonElement);
-            if (current < 0) return;
-            let next: number | null = null;
-            if (e.key === "ArrowRight") next = (current + 1) % nodes.length;
-            else if (e.key === "ArrowLeft") next = (current - 1 + nodes.length) % nodes.length;
-            else if (e.key === "Home") next = 0;
-            else if (e.key === "End") next = nodes.length - 1;
-            if (next !== null) {
-              e.preventDefault();
-              nodes[next].focus();
-            }
-          }}
-        >
-          <div className="river" />
-          {journey.timeline.map((p) => (
-            <button key={p.periodId} role="tab" aria-selected={p.periodId === activeNode.periodId}
-              className={`timeline-node ${p.periodId === activeNode.periodId ? "active" : ""}`}
-              onClick={() => setActivePeriod(p.periodId)}>
-              <div className={`node-dot ${p.color}`}>
-                <span>{p.confidence}</span>
-              </div>
-              <div className="node-card">
-                <small className="ta">{p.era}</small>
-                <b className="ta">{p.word}</b>
-                <span className="meaning-chip ta">{p.meaningTa}</span>
-                <span>{p.meaningEn}</span>
-                <em>{p.years}</em>
-                <i className="confidence-dot" title={`Confidence ${p.confidence}%`}>
-                  <Icon name="evidence" /> {p.evidenceCount} சான்றுகள் · {p.confidence}%
-                </i>
-              </div>
-            </button>
-          ))}
-        </div>
-      </section>
-      <section className="journey-analysis">
-        <div className="analysis-summary">
-          <div>
-            <span className={`badge ${journey.primaryChangeType}`}>
-              {journey.primaryChangeType === "spelling" ? "எழுத்து மாற்றம்"
-                : journey.primaryChangeType === "meaning" ? "பொருள் மாற்றம்" : "பயன்பாட்டு மாற்றம்"}
-            </span>
-            <h2 className="ta">{journey.changeSummary}</h2>
-            <p>{activeNode.meaningEn} — {activeNode.years}. Confidence {activeNode.confidence}%.</p>
-          </div>
-          <button className="evidence-callout" onClick={() => setEvidenceOpen(true)}>
-            <Icon name="evidence" size={28} />
-            <span><b>{activeNode.evidenceCount} primary sources</b><small>Open evidence panel</small></span>
-            <Icon name="arrow" />
-          </button>
-        </div>
-        {compare ? (
-          <div className="compare-view">
-            <div className="compare-header">
-              <div>
-                <span className="kicker">LETTER-BY-LETTER COMPARISON</span>
-                <h2 className="ta">எழுத்துகளின் மாற்றம்</h2>
-              </div>
-              <div className="legend">
-                <span><i className="removed" />Removed</span>
-                <span><i className="added" />Added</span>
-              </div>
-            </div>
-            <DiffStrip tokens={compare.spelling.diff} fromText={compare.spelling.fromText} toText={compare.spelling.toText} />
-            <p>{compare.spelling.descriptionEn}</p>
-            <p className="ta">{compare.spelling.descriptionTa}</p>
-          </div>
-        ) : (
-          <p><small>Select another era to see the letter-level diff from {journey.timeline[0]?.era}.</small></p>
-        )}
-      </section>
-      {evidenceOpen && (
-        <EvidenceDrawer wordId={journey.word.id} periodId={activeNode.periodId}
-          onClose={() => setEvidenceOpen(false)} notify={notify} />
-      )}
-    </main>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // Compare view: word + from/to, diff + drift + usage
+// (Journey view lives in ./views/JourneyView and is lazy-loaded.)
 // ---------------------------------------------------------------------------
 
 function ComparePage({ notify }: { notify: (m: string) => void }) {
@@ -1056,15 +617,18 @@ function InsightsView() {
             ))}
           </div>
         </div>
-        <div className="dash-card">
-          <span className="kicker">CHANGE TYPES</span><h3 className="ta">மாற்ற வகைகள்</h3>
-          <div className="donut"><div><b>{(data.changeTypeDistribution.totalChanges / 1000).toFixed(1)}k</b><span>changes</span></div></div>
-          <div className="donut-legend">
-            <span><i className="terra" />Spelling <b>{data.changeTypeDistribution.spelling}%</b></span>
-            <span><i className="teal" />Meaning <b>{data.changeTypeDistribution.meaning}%</b></span>
-            <span><i className="gold" />Usage <b>{data.changeTypeDistribution.usage}%</b></span>
-          </div>
-        </div>
+      </div>
+      <div className="dashboard-grid" style={{ marginTop: 18 }}>
+        <Suspense
+          fallback={
+            <div className="dash-card wide" aria-label="Loading charts">
+              <div className="skeleton"><i /><i /><i /></div>
+              <small>Loading charts…</small>
+            </div>
+          }
+        >
+          <InsightsChartsPanel data={data} />
+        </Suspense>
       </div>
     </main>
   );
@@ -1167,8 +731,10 @@ function ContributeView({ notify }: { notify: (m: string) => void }) {
   const [busy, setBusy] = useState(false);
   const [justSubmitted, setJustSubmitted] = useState<ContributionRecord[]>([]);
 
+  const [queueLoading, setQueueLoading] = useState(true);
   const refresh = useCallback(() => {
-    api.contributions().then(setItems).catch(() => undefined);
+    setQueueLoading(true);
+    api.contributions().then(setItems).catch(() => undefined).finally(() => setQueueLoading(false));
     api.periods().then(setPeriods).catch(() => undefined);
   }, []);
 
@@ -1303,7 +869,8 @@ function ContributeView({ notify }: { notify: (m: string) => void }) {
               <span className={`status-pill ${w.status}`}>{w.status}</span>
             </div>
           ))}
-          {items.length === 0 && <small>No contributions yet.</small>}
+          {queueLoading && <div className="skeleton" aria-label="Loading submissions"><i /><i /><i /></div>}
+          {!queueLoading && items.length === 0 && <small>No contributions yet.</small>}
         </aside>
       </div>
     </main>
@@ -1564,7 +1131,16 @@ function parseWordHash(): { id: string; params: JourneyParams } | null {
       {view === "home" && <Home setView={setView} onSearch={openSearch} onOpenJourney={openJourney} />}
       {view === "search" && <SearchView initialQuery={searchQuery} onOpenJourney={openJourney} />}
       {view === "journey" && (
-        <JourneyView wordId={journeyId} params={journeyParams} notify={notify} onShare={shareUrl} />
+        <Suspense
+          fallback={
+            <main className="page" aria-label="Loading word journey">
+              <div className="skeleton"><i /><i /><i /><i /></div>
+              <b className="ta">சான்றுகளைத் தேடுகிறோம்…</b>
+            </main>
+          }
+        >
+          <JourneyView wordId={journeyId} params={journeyParams} notify={notify} onShare={shareUrl} />
+        </Suspense>
       )}
       {view === "compare" && <ComparePage notify={notify} />}
       {view === "insights" && <InsightsView />}
