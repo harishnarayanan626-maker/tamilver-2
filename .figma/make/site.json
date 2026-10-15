@@ -1,0 +1,10 @@
+{
+  "description": "Explore the evolution of Tamil words across historical eras with interactive timelines, evidence-backed research, and advanced linguistic analysis tools.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}

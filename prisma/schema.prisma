@@ -1,0 +1,234 @@
+// Prisma Schema for Sorkalam (சொற்காலம்)
+
+generator client {
+  provider = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [pg_trgm, unaccent]
+}
+
+enum UserRole {
+  student
+  researcher
+  scholar
+  admin
+}
+
+enum ChangeType {
+  spelling
+  meaning
+  usage
+}
+
+enum SourceType {
+  poem
+  inscription
+  grammar
+  prose
+}
+
+enum ContributionStatus {
+  pending
+  approved
+  rejected
+}
+
+model Period {
+  id          String      @id
+  name        String
+  nameTa      String      @map("name_ta")
+  startYear   Int         @map("start_year")
+  endYear     Int         @map("end_year")
+  color       String      @default("coral")
+  orderIndex  Int         @default(0) @map("order_index")
+  sources     Source[]
+  wordForms   WordForm[]
+  meanings    Meaning[]
+  fromChanges Change[]    @relation("FromPeriod")
+  toChanges   Change[]    @relation("ToPeriod")
+  contributions Contribution[]
+
+  @@map("periods")
+}
+
+model User {
+  id            String            @id @default(uuid())
+  role          UserRole          @default(researcher)
+  name          String
+  email         String            @unique
+  passwordHash  String?           @map("password_hash")
+  institution   String?
+  wordsCreated  Word[]
+  verifiedEvidences Evidence[]
+  collections   SavedCollection[]
+  contributions Contribution[]    @relation("UserContributions")
+  reviewedContributions Contribution[] @relation("ScholarReviews")
+  searchLogs    SearchLog[]
+
+  @@map("users")
+}
+
+model Source {
+  id           String      @id
+  title        String
+  titleTa      String      @map("title_ta")
+  author       String?
+  periodId     String      @map("period_id")
+  period       Period      @relation(fields: [periodId], references: [id])
+  century      String?
+  type         SourceType  @default(poem)
+  referenceUrl String?     @map("reference_url")
+  evidences    Evidence[]
+
+  @@index([periodId])
+  @@map("sources")
+}
+
+model Word {
+  id              String            @id
+  lemmaModern     String            @map("lemma_modern")
+  lemmaTa         String            @map("lemma_ta")
+  transliteration String
+  pos             String            @default("noun")
+  createdBy       String?           @map("created_by")
+  creator         User?             @relation(fields: [createdBy], references: [id])
+  forms           WordForm[]
+  meanings        Meaning[]
+  changes         Change[]
+  collectionItems CollectionItem[]
+
+  @@index([lemmaTa])
+  @@index([lemmaModern])
+  @@map("words")
+}
+
+model WordForm {
+  id             String      @id
+  wordId         String      @map("word_id")
+  word           Word        @relation(fields: [wordId], references: [id], onDelete: Cascade)
+  periodId       String      @map("period_id")
+  period         Period      @relation(fields: [periodId], references: [id])
+  formText       String      @map("form_text")
+  scriptVariant  String?     @default("Tamil") @map("script_variant")
+  frequencyScore Float       @default(50.0) @map("frequency_score")
+  evidences      Evidence[]
+
+  @@index([wordId])
+  @@index([periodId])
+  @@index([formText])
+  @@map("word_forms")
+}
+
+model Meaning {
+  id         String   @id
+  wordId     String   @map("word_id")
+  word       Word     @relation(fields: [wordId], references: [id], onDelete: Cascade)
+  periodId   String   @map("period_id")
+  period     Period   @relation(fields: [periodId], references: [id])
+  meaningEn  String   @map("meaning_en")
+  meaningTa  String   @map("meaning_ta")
+  confidence Float    @default(0.9)
+
+  @@index([wordId])
+  @@index([periodId])
+  @@map("meanings")
+}
+
+model Evidence {
+  id             String    @id
+  wordFormId     String    @map("word_form_id")
+  wordForm       WordForm  @relation(fields: [wordFormId], references: [id], onDelete: Cascade)
+  sourceId       String    @map("source_id")
+  source         Source    @relation(fields: [sourceId], references: [id])
+  verseText      String    @map("verse_text")
+  lineRef        String?   @map("line_ref")
+  translationEn  String?   @map("translation_en")
+  pageOrVerseNo  String?   @map("page_or_verse_no")
+  verified       Boolean   @default(false)
+  verifiedBy     String?   @map("verified_by")
+  verifier       User?     @relation(fields: [verifiedBy], references: [id])
+
+  @@index([wordFormId])
+  @@index([sourceId])
+  @@map("evidences")
+}
+
+model Change {
+  id              String      @id
+  wordId          String      @map("word_id")
+  word            Word        @relation(fields: [wordId], references: [id], onDelete: Cascade)
+  fromPeriodId    String      @map("from_period_id")
+  fromPeriod      Period      @relation("FromPeriod", fields: [fromPeriodId], references: [id])
+  toPeriodId      String      @map("to_period_id")
+  toPeriod        Period      @relation("ToPeriod", fields: [toPeriodId], references: [id])
+  changeType      ChangeType  @map("change_type")
+  description     String
+  similarityScore Float       @default(0.0) @map("similarity_score")
+  details         Json        @default("{}")
+
+  @@index([wordId])
+  @@index([fromPeriodId])
+  @@index([toPeriodId])
+  @@map("changes")
+}
+
+model SavedCollection {
+  id          String            @id @default(uuid())
+  userId      String            @map("user_id")
+  user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  items       CollectionItem[]
+
+  @@map("saved_collections")
+}
+
+model CollectionItem {
+  id           String          @id @default(uuid())
+  collectionId String          @map("collection_id")
+  collection   SavedCollection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  wordId       String          @map("word_id")
+  word         Word            @relation(fields: [wordId], references: [id], onDelete: Cascade)
+  notes        String?
+
+  @@unique([collectionId, wordId])
+  @@index([collectionId])
+  @@map("collection_items")
+}
+
+model Contribution {
+  id            String             @id @default(uuid())
+  userId        String             @map("user_id")
+  user          User               @relation("UserContributions", fields: [userId], references: [id], onDelete: Cascade)
+  wordText      String             @map("word_text")
+  periodId      String             @map("period_id")
+  period        Period             @relation(fields: [periodId], references: [id])
+  changeType    ChangeType         @map("change_type")
+  sourceTitle   String             @map("source_title")
+  verseText     String             @map("verse_text")
+  translationEn String?            @map("translation_en")
+  lineRef       String?            @map("line_ref")
+  century       String?
+  status        ContributionStatus @default(pending)
+  reviewerId    String?            @map("reviewer_id")
+  reviewer      User?              @relation("ScholarReviews", fields: [reviewerId], references: [id])
+  notes         String?
+
+  @@index([status])
+  @@map("contributions")
+}
+
+model SearchLog {
+  id           String   @id @default(uuid())
+  query        String
+  userId       String?  @map("user_id")
+  user         User?    @relation(fields: [userId], references: [id])
+  resultsCount Int      @default(0) @map("results_count")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@map("search_logs")
+}
