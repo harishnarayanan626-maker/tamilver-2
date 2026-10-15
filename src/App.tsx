@@ -13,8 +13,10 @@ import {
   type JourneyResponse,
   type PeriodItem,
   type SearchResponse,
+  type SearchResultItem,
   type DiffToken,
 } from "./lib/api";
+import { loadRecent, saveRecent, findRecent, type RecentEntry } from "./lib/recent";
 
 type View =
   | "home"
@@ -421,6 +423,8 @@ function SearchView({ initialQuery, onOpenJourney }: {
   const [error, setError] = useState<string | null>(null);
   const debounced = useDebouncedValue(query, 300);
   const reqId = useRef(0);
+  const [recent, setRecent] = useState<RecentEntry[]>(() => loadRecent());
+  const [servedFromCache, setServedFromCache] = useState(false);
 
   useEffect(() => {
     api.periods().then(setPeriods).catch(() => undefined);
@@ -430,11 +434,51 @@ function SearchView({ initialQuery, onOpenJourney }: {
 
   useEffect(() => {
     const id = ++reqId.current;
-    setLoading(true);
     setError(null);
+    setServedFromCache(false);
+    // Offline-friendly: serve the cached search instantly, then revalidate live.
+    const canUseCache = page === 1 && period === "all" && changeType === "all";
+    const hit = canUseCache ? findRecent(debounced) : null;
+    if (hit) {
+      setData({
+        query: hit.query,
+        targetTamil: hit.targetTamil,
+        transliterationSuggestions: [],
+        total: hit.total,
+        page: 1,
+        limit: 12,
+        totalPages: Math.max(1, Math.ceil(hit.total / 12)),
+        results: hit.results,
+      });
+      setLoading(false);
+      setServedFromCache(true);
+    } else {
+      setLoading(true);
+    }
     api.search({ q: debounced, period, changeType, page, limit: 12 })
-      .then((d) => { if (id === reqId.current) { setData(d); setLoading(false); } })
-      .catch((e: Error) => { if (id === reqId.current) { setError(e.message); setLoading(false); } });
+      .then((d) => {
+        if (id !== reqId.current) return;
+        setData(d);
+        setLoading(false);
+        setServedFromCache(false);
+        if (page === 1 && period === "all" && changeType === "all") {
+          setRecent(saveRecent({
+            query: d.query, targetTamil: d.targetTamil, at: Date.now(), total: d.total,
+            results: d.results.slice(0, 20) as SearchResultItem[],
+          }));
+        }
+      })
+      .catch((e: Error) => {
+        if (id !== reqId.current) return;
+        // Offline with a cached answer: keep the cached results and surface a gentle note.
+        if (hit) {
+          setLoading(false);
+          setServedFromCache(true);
+        } else {
+          setError(e.message);
+          setLoading(false);
+        }
+      });
   }, [debounced, period, changeType, page]);
 
   useEffect(() => { setPage(1); }, [debounced, period, changeType]);
@@ -451,6 +495,19 @@ function SearchView({ initialQuery, onOpenJourney }: {
             <span>Transliterated <b>“{data.query}”</b> → <b className="ta">“{data.targetTamil}”</b></span>
             <button onClick={() => setQuery(data.targetTamil)}>Search it</button>
           </div>
+        )}
+        {recent.length > 0 && (
+          <div className="recent-row" aria-label="Recent searches">
+            <span><Icon name="search" size={14} /> Recent:</span>
+            {recent.slice(0, 8).map((r) => (
+              <button key={r.query} className="recent-chip ta" onClick={() => { setQuery(r.query); setPage(1); }}>
+                {r.targetTamil || r.query}
+              </button>
+            ))}
+          </div>
+        )}
+        {servedFromCache && !loading && (
+          <div className="suggestion"><Icon name="check" /><span>Showing cached results instantly — refreshing live…</span></div>
         )}
       </div>
       <div className="results-layout">
